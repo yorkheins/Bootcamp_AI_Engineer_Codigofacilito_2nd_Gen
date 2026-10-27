@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -9,6 +10,27 @@ if TYPE_CHECKING:
     from agents.trace import TraceStep
 
 StopReason = Literal["respuesta", "max_pasos", "presupuesto", "sin_progreso", "timeout", "error"]
+
+
+def _firma(step: TraceStep) -> tuple[str, str] | None:
+    """Herramienta y argumentos normalizados. None si el paso no es una llamada."""
+    paso = step.paso
+    if paso.accion != "usar_herramienta":
+        return None
+    raw = paso.argumentos_json or "{}"
+    try:
+        argumentos = json.dumps(json.loads(raw), sort_keys=True, separators=(",", ":"))
+    except json.JSONDecodeError:
+        argumentos = raw
+    return (paso.herramienta or "", argumentos)
+
+
+def _sin_progreso(traza: list[TraceStep]) -> bool:
+    """La misma herramienta con los mismos argumentos, dos pasos seguidos."""
+    if len(traza) < 2:
+        return False
+    firma = _firma(traza[-1])
+    return firma is not None and firma == _firma(traza[-2])
 
 
 @dataclass(frozen=True)
@@ -29,8 +51,8 @@ class AgentBudget:
             return "presupuesto"
         if elapsed_s >= self.max_segundos:
             return "timeout"
-        # TODO(clase-4): práctica guiada. Si la misma herramienta se llamó con los mismos
-        # argumentos dos pasos seguidos, regresa "sin_progreso".
+        if _sin_progreso(traza):
+            return "sin_progreso"
         return None
 
     def exhausted_totals(

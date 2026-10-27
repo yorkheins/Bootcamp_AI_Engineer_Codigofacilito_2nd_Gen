@@ -75,6 +75,22 @@ def test_error_observation_then_corrects(logger, fake_sleep):
     assert "Argumentos inválidos" in user_content(provider, 1)
 
 
+def test_repeated_tool_stops_with_sin_progreso(logger, fake_sleep):
+    provider, agent = make_agent(
+        [use_tool(), use_tool(), answer("no debería llegar")],
+        logger,
+        fake_sleep,
+    )
+
+    result = agent.run("Revisa el T-1042 varias veces hasta que cambie de estado")
+
+    assert result.motivo == "sin_progreso"
+    assert result.respuesta is None
+    assert len(result.traza) == 2
+    assert len(provider.calls) == 2
+    assert result.traza[0].paso.argumentos_json == result.traza[1].paso.argumentos_json
+
+
 def test_max_pasos(logger, fake_sleep):
     _, agent = make_agent(
         [use_tool(), use_tool(ticket_id="T-1043")], logger, fake_sleep, budget=AgentBudget(2)
