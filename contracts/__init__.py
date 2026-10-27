@@ -3,12 +3,20 @@
 from contracts.structured_output import StructuredOutputError, generate_structured
 from contracts.ticket import TicketClassification
 from contracts.tool_loop import MAX_ITERS, MaxIterationsError, execute_tool, run_tool_loop
-from contracts.tool_schemas import BUSCAR_TICKET, BuscarTicketArgs, ToolSpec
+from contracts.tool_schemas import (
+    BUSCAR_TICKET,
+    CONSULTAR_PROVEEDOR,
+    BuscarTicketArgs,
+    ConsultarProveedorArgs,
+    ToolSpec,
+)
 
 __all__ = [
     "BUSCAR_TICKET",
+    "CONSULTAR_PROVEEDOR",
     "MAX_ITERS",
     "BuscarTicketArgs",
+    "ConsultarProveedorArgs",
     "MaxIterationsError",
     "StructuredOutputError",
     "TicketClassification",

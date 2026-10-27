@@ -21,6 +21,7 @@ from pydantic import ValidationError
 
 from contracts import (
     BUSCAR_TICKET,
+    CONSULTAR_PROVEEDOR,
     MaxIterationsError,
     StructuredOutputError,
     TicketClassification,
@@ -31,12 +32,6 @@ from core.config import KNOWN_PROVIDERS, Settings, get_settings
 from core.errors import AllProvidersFailedError
 from core.llm_client import LLMClient, ToolCall
 from prompting import PromptKit, PromptNotFoundError
-
-# TODO(clase-2): migra este system prompt a prompts/operator_assistant/v1.yaml y cárgalo con PromptKit. # noqa: E501
-SYSTEM_PROMPT = (
-    "Eres un asistente de operaciones de una empresa mediana. "
-    "Responde siempre en español, de forma clara y en máximo 3 oraciones."
-)
 
 # --demo: solo Gemini, sin fallbacks. Funciona aunque GroqProvider siga con su TODO.
 DEMO_TICKET_ID = "T-1043"
@@ -53,7 +48,7 @@ PROMPT_VARIABLES = {
 TICKETS_DB_PATH = DATA_DIR / "tickets_db.json"
 
 # Herramientas disponibles en el modo --tools.
-TOOLS = [BUSCAR_TICKET]
+TOOLS = [BUSCAR_TICKET, CONSULTAR_PROVEEDOR]
 TOOL_RESULT_PREVIEW = 120  # Caracteres que se muestran de cada resultado en pantalla.
 
 GRAY = "\033[90m"
@@ -100,7 +95,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--tools",
         action="store_true",
-        help="Responde la pregunta con herramientas, como buscar_ticket (Clase 3).",
+        help="Responde con herramientas: buscar_ticket y consultar_proveedor (Clase 3).",
     )
     args = parser.parse_args(argv)
     if args.prompt is None and not (args.demo or args.ticket):
@@ -227,10 +222,13 @@ def main(argv: list[str] | None = None) -> int:
         params = {**prompt.model_params, **cli_params}
         log_extra = {"prompt_name": prompt.name, "prompt_version": prompt.version}
     else:
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": text or demo_prompt()},
-        ]
+        try:
+            prompt = PromptKit(PROMPTS_DIR).get("operator_assistant")
+            messages = prompt.render(message=text or demo_prompt())
+        except (PromptNotFoundError, ValueError) as e:
+            return fail(str(e))
+        params = dict(prompt.model_params)
+        log_extra = {"prompt_name": prompt.name, "prompt_version": prompt.version}
 
     try:
         client = build_client(args)

@@ -6,7 +6,13 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from contracts import BUSCAR_TICKET, BuscarTicketArgs
+from contracts import (
+    BUSCAR_TICKET,
+    CONSULTAR_PROVEEDOR,
+    BuscarTicketArgs,
+    ConsultarProveedorArgs,
+)
+from tools.proveedores import consultar_proveedor
 from tools.tickets import buscar_ticket
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +54,27 @@ def test_buscar_ticket_finds_t1042():
         "historial",
     }
     assert 1 <= len(result["historial"]) <= 3
+
+
+def test_consultar_proveedor_schema_says_when_not_to_use_it():
+    function = CONSULTAR_PROVEEDOR.to_openai()["function"]
+    assert function["name"] == "consultar_proveedor"
+    assert "SLA" in function["description"]
+    assert "No la uses" in function["description"]
+    assert function["parameters"]["required"] == ["nombre"]
+
+
+def test_consultar_proveedor_finds_pagosred_ignoring_case():
+    result = consultar_proveedor(ConsultarProveedorArgs(nombre="  pagosred "))
+    assert result["nombre"] == "PagosRed"
+    assert result["sla_horas"] == 4
+    assert result["estado"] == "incidente"
+
+
+def test_consultar_proveedor_unknown_returns_error():
+    assert consultar_proveedor(ConsultarProveedorArgs(nombre="NoExiste")) == {
+        "error": "proveedor NoExiste no existe"
+    }
 
 
 def test_buscar_ticket_unknown_returns_error():

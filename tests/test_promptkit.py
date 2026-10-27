@@ -44,16 +44,27 @@ def kit() -> PromptKit:
     return PromptKit(PROMPTS_ROOT)
 
 
-def test_loads_v1_and_v2(kit):
-    assert kit.versions("ticket_classifier") == [1, 2]
+def test_operator_assistant_keeps_the_cli_system_prompt(kit):
+    prompt = kit.get("operator_assistant")
+    system, user = prompt.render(message="hola")
+    assert prompt.version == 1
+    assert "empresa mediana" in system["content"]
+    assert "máximo 3 oraciones" in system["content"]
+    assert user["content"] == "hola"
+
+
+def test_loads_v1_v2_and_v3(kit):
+    assert kit.versions("ticket_classifier") == [1, 2, 3]
     v1 = kit.get("ticket_classifier", 1)
     v2 = kit.get("ticket_classifier", 2)
-    assert (v1.version, v2.version) == (1, 2)
+    v3 = kit.get("ticket_classifier", 3)
+    assert (v1.version, v2.version, v3.version) == (1, 2, 3)
     assert v2.model_params == {"temperature": 0, "max_tokens": 10}
+    assert v3.model_params == {"temperature": 0, "max_tokens": 10}
 
 
-def test_get_without_version_returns_active_v2(kit):
-    assert kit.get("ticket_classifier").version == 2
+def test_get_without_version_returns_active_v3(kit):
+    assert kit.get("ticket_classifier").version == 3
 
 
 def test_get_specific_version_even_if_inactive(kit):
@@ -115,6 +126,17 @@ def test_v2_lists_all_categories_and_company(kit):
     system, _ = kit.get("ticket_classifier", 2).render(**VARS)
     assert ", ".join(CATEGORIES) in system["content"]
     assert "Acme Operaciones" in system["content"]
+
+
+def test_v3_shows_examples_and_keeps_the_ticket_isolated(kit):
+    system, user = kit.get("ticket_classifier", 3).render(**VARS)
+    assert VARS["ticket"] not in system["content"]
+    assert user["content"] == f"<ticket>{VARS['ticket']}</ticket>"
+    examples = kit.get("ticket_classifier", 3).examples
+    assert "conmutador no transfiere" in system["content"]
+    assert "posada de fin de año" in system["content"]
+    assert system["content"].count("<ticket>") == 1
+    assert system["content"].count("<ejemplo>") == len(examples)
 
 
 def test_examples_and_categories_available_in_template(tmp_path):
