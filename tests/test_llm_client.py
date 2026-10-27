@@ -247,3 +247,54 @@ def test_capabilities_by_provider():
     assert GeminiProvider.supports_tools and GeminiProvider.supports_json_schema
     assert OllamaProvider.supports_tools and not OllamaProvider.supports_json_schema
     assert OllamaProvider.supports_json_object
+
+
+def test_usage_meter_counts_repairs_and_skips_failures(logger, fake_sleep):
+    from contracts import TicketClassification, generate_structured
+
+    valid = (
+        '{"razon": "r", "categoria": "falla", "prioridad": "media", '
+        '"resumen": "s", "requiere_humano": false}'
+    )
+    script = [
+        TransientProviderError("gemini", "rate limit", 429),
+        make_response("gemini", "no es json"),
+        make_response("gemini", valid),
+    ]
+    client = LLMClient([FakeProvider("gemini", script)], logger, sleep=fake_sleep)
+
+    with client.track() as meter:
+        generate_structured(client, MESSAGES, TicketClassification)
+
+    assert meter.calls == 2  # intento + reparación; el 429 no cuenta
+    assert (meter.tokens_in, meter.tokens_out, meter.tokens) == (20, 10, 30)
+    assert meter.cost_usd == pytest.approx(0.0002)
+    assert meter.latency_ms == pytest.approx(24.0)
+
+
+def test_nested_track_accumulates_in_both(logger, fake_sleep):
+    script = [make_response("gemini") for _ in range(3)]
+    client = LLMClient([FakeProvider("gemini", script)], logger, sleep=fake_sleep)
+
+    with client.track() as outer:
+        client.generate(MESSAGES)
+        with client.track() as inner:
+            client.generate(MESSAGES)
+            client.generate(MESSAGES)
+
+    assert (outer.calls, inner.calls) == (3, 2)
+    assert (outer.tokens, inner.tokens) == (45, 30)
+    client_meters_after = client._meters
+    assert client_meters_after == []
+
+
+def test_annotate_adds_stop_reason_to_last_event(logger, log_path, fake_sleep):
+    client = LLMClient([FakeProvider("gemini", [make_response("gemini")] * 2)], logger)
+    client.generate(MESSAGES)
+    client.generate(MESSAGES)
+
+    logger.annotate(client.last_request_id, stop_reason="respuesta")
+
+    first, second = read_events(log_path)
+    assert "stop_reason" not in first
+    assert second["stop_reason"] == "respuesta"

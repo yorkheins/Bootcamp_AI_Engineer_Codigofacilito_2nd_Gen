@@ -8,6 +8,10 @@ Uso:
     uv run main.py --prompt ticket_classifier --prompt-version 1 "No abre el ERP"
     uv run main.py --structured --ticket T-1042
     uv run main.py --tools "¿Cómo va el T-1042?"
+    uv run main.py --agent react "Compara el T-1042 y el T-1014"
+    uv run main.py --agent plan "Compara el T-1042 y el T-1014"
+    uv run main.py --agent react --mcp "¿Cómo va el T-1042?"
+    uv run main.py --agent react --rol lectura "Marca el T-1042 como resuelto"
 """
 
 from __future__ import annotations
@@ -46,6 +50,8 @@ PROMPT_VARIABLES = {
     "operator_tools": {"company": "Acme Operaciones"},
 }
 TICKETS_DB_PATH = DATA_DIR / "tickets_db.json"
+# Clase 5: nombre, permiso, resultado e intentos de cada herramienta (nunca argumentos).
+TOOL_LOG_PATH = Path(__file__).parent / "logs" / "tool_calls.jsonl"
 
 # Herramientas disponibles en el modo --tools.
 TOOLS = [BUSCAR_TICKET, CONSULTAR_PROVEEDOR]
@@ -97,7 +103,41 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Responde con herramientas: buscar_ticket y consultar_proveedor (Clase 3).",
     )
+    parser.add_argument(
+        "--agent",
+        choices=("react", "plan"),
+        help="Responde con un agente ReAct o plan-and-execute (Clase 4).",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Con --agent, muestra pensamientos y observaciones completas.",
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="Con --agent, verifica la respuesta contra la traza y la corrige una vez.",
+    )
+    parser.add_argument(
+        "--mcp",
+        action="store_true",
+        help="Con --agent, toma las herramientas del server MCP por stdio (Clase 5).",
+    )
+    parser.add_argument(
+        "--rol",
+        choices=("lectura", "operador"),
+        default="operador",
+        help="Con --agent, rol para el ToolRunner: lectura u operador (Clase 5).",
+    )
     args = parser.parse_args(argv)
+    if args.verify and not args.agent:
+        parser.error("--verify requiere --agent.")
+    if args.mcp and not args.agent:
+        parser.error("--mcp requiere --agent.")
+    if args.agent and (args.structured or args.tools or args.prompt_name or args.demo):
+        parser.error("--agent no se combina con --structured, --tools, --prompt ni --demo.")
+    if args.agent and (args.prompt is None or args.ticket):
+        parser.error('--agent necesita la pregunta como texto, por ejemplo "¿Cómo va el T-1042?".')
     if args.prompt is None and not (args.demo or args.ticket):
         parser.error("falta el texto a enviar (o usa --demo o --ticket).")
     if args.prompt_version is not None and not args.prompt_name:
@@ -158,6 +198,103 @@ def run_tools(client: LLMClient, question: str) -> int:
         **prompt.model_params,
     )
     print(answer.strip())
+    return 0
+
+
+STOP_MESSAGES = {
+    "max_pasos": "el agente llegó al máximo de pasos sin responder.",
+    "presupuesto": "el agente agotó su presupuesto de tokens o de costo.",
+    "sin_progreso": "el agente repitió la misma acción sin avanzar.",
+    "timeout": "el agente se quedó sin tiempo.",
+    "error": "el modelo no produjo un paso válido o el proveedor falló.",
+}
+
+
+def describe_action(paso) -> str:
+    """`buscar_ticket T-1042` o `responder`, para la línea de pasos."""
+    if paso.accion == "responder":
+        return "responder"
+    try:
+        values = json.loads(paso.argumentos_json or "{}").values()
+    except (ValueError, AttributeError):
+        values = [paso.argumentos_json]
+    return " ".join([paso.herramienta or "?", *(str(v) for v in values)]).strip()
+
+
+def run_agent(
+    client: LLMClient,
+    kind: str,
+    question: str,
+    verbose: bool,
+    verify: bool = False,
+    *,
+    mcp: bool = False,
+    rol: str = "operador",
+) -> int:
+    from agents import PlanAndExecute, ReActAgent, verify_and_revise
+    from agents.tools import ToolRunner
+    from contracts.tool_schemas import ACTUALIZAR_ESTADO, LISTAR_TICKETS_POR_PROVEEDOR
+
+    actions: list[str] = []
+
+    def on_event(event: str, data: dict) -> None:
+        if event == "plan":
+            plan = data["plan"]
+            label = "replan" if data["replan"] else "plan"
+            print(f"{label}: {len(plan.pasos)} pasos")
+            for i, paso in enumerate(plan.pasos, start=1):
+                tool = f" ({paso.herramienta})" if paso.herramienta else ""
+                print(f"  {i}. {paso.objetivo}{tool}")
+        elif event == "paso":
+            paso = data["paso"]
+            actions.append(f"[{len(actions) + 1}] {describe_action(paso)}")
+            if verbose:
+                print(f"{GRAY}{actions[-1]} · {paso.pensamiento}{RESET}")
+        elif event == "observacion" and verbose:
+            print(f"{GRAY}    ← {json.dumps(data['observacion'], ensure_ascii=False)}{RESET}")
+
+    agent_cls = ReActAgent if kind == "react" else PlanAndExecute
+    if mcp:
+        # El server MCP aplica su propio ToolRunner con OPERADOR_ROL.
+        from operador_mcp.client import MCPToolset
+
+        with MCPToolset(rol=rol) as toolset:
+            print(f"{GRAY}herramientas: MCP por stdio · rol {rol}{RESET}")
+            result = agent_cls(client, toolset.tools(), on_event=on_event).run(question)
+    else:
+        # El agente puede proponer actualizar_estado; el ToolRunner decide según el rol.
+        extras = [ACTUALIZAR_ESTADO, LISTAR_TICKETS_POR_PROVEEDOR]
+        tools = [*TOOLS, *(tool for tool in extras if tool not in TOOLS)]
+        runner = ToolRunner(tools, rol=rol, log_path=TOOL_LOG_PATH)
+        print(f"{GRAY}herramientas: locales · rol {rol}{RESET}")
+        result = agent_cls(client, tools, on_event=on_event, runner=runner).run(question)
+    respuesta, checked = result.respuesta, None
+    llamadas, tokens, cost_usd = result.llamadas, result.tokens, result.cost_usd
+    if verify and respuesta:
+        with client.track() as extra:
+            checked = verify_and_revise(client, question, respuesta, result.traza)
+        respuesta = checked.respuesta
+        llamadas += extra.calls
+        tokens += extra.tokens
+        cost_usd += extra.cost_usd
+
+    if actions:
+        print("   ".join(actions))
+    if checked:
+        if checked.corregida:
+            problems = "; ".join(checked.verificacion.problemas)
+            print(f"{GRAY}verificación: no aprobada ({problems}) → respuesta corregida{RESET}")
+        else:
+            print(f"{GRAY}verificación: aprobada{RESET}")
+    if respuesta:
+        print(respuesta.strip())
+    print(
+        f"{GRAY}motivo: {result.motivo} · {llamadas} llamadas · "
+        f"{tokens:,} tokens · ${cost_usd:.6f}{RESET}"
+    )
+    if result.motivo != "respuesta":
+        print(f"Aviso: {STOP_MESSAGES[result.motivo]}", file=sys.stderr)
+        return 2
     return 0
 
 
@@ -236,6 +373,11 @@ def main(argv: list[str] | None = None) -> int:
         return fail(config_error(e))
     except NotImplementedError as e:
         return fail(str(e))
+
+    if args.agent:
+        return run_agent(
+            client, args.agent, text, args.verbose, args.verify, mcp=args.mcp, rol=args.rol
+        )
 
     if args.structured or args.tools:
         try:

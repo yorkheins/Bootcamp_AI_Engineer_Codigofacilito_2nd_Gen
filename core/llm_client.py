@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from core.errors import AllProvidersFailedError, ProviderError, TransientProviderError
+from core.usage import UsageMeter
 
 if TYPE_CHECKING:
     from core.config import Settings
@@ -73,6 +75,24 @@ class LLMClient:
         self.logger = logger
         self.max_retries = max_retries
         self._sleep = sleep
+        self._meters: list[UsageMeter] = []
+        # request_id del último evento escrito en el log (lo usan los agentes para
+        # anotar `stop_reason` al terminar).
+        self.last_request_id: str | None = None
+
+    @contextmanager
+    def track(self) -> Iterator[UsageMeter]:
+        """Mide el uso de todas las llamadas exitosas dentro del bloque.
+
+        Se puede anidar: cada `track()` activo recibe cada respuesta. Incluye las llamadas
+        de `generate_structured` y sus reparaciones, porque todas pasan por `generate()`.
+        """
+        meter = UsageMeter()
+        self._meters.append(meter)
+        try:
+            yield meter
+        finally:
+            self._meters.remove(meter)
 
     @classmethod
     def from_settings(cls, settings: Settings) -> LLMClient:
@@ -125,7 +145,7 @@ class LLMClient:
                         continue
                     errors.append(e)
                     break  # Permanente o reintentos agotados: siguiente proveedor.
-                self.logger.log(
+                event = self.logger.log(
                     provider=response.provider,
                     model=response.model,
                     tokens_in=response.tokens_in,
@@ -141,6 +161,9 @@ class LLMClient:
                     ttft_ms=None,
                     **{"tool_calls": [c.name for c in response.tool_calls] or None, **extra},
                 )
+                self.last_request_id = event["request_id"]
+                for meter in self._meters:
+                    meter.add(response)
                 return response
 
         raise AllProvidersFailedError(errors)
@@ -154,7 +177,7 @@ class LLMClient:
         prompt_chars: int,
         extra: dict,
     ) -> None:
-        self.logger.log(
+        event = self.logger.log(
             provider=provider.name,
             model=getattr(provider, "model", None),
             tokens_in=0,
@@ -168,3 +191,4 @@ class LLMClient:
             ttft_ms=None,
             **extra,
         )
+        self.last_request_id = event["request_id"]

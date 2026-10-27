@@ -74,3 +74,13 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Evita que las variables del entorno del alumno afecten los tests."""
     for var in ("GEMINI_API_KEY", "GROQ_API_KEY", "PRIMARY", "FALLBACKS"):
         monkeypatch.delenv(var, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_ticket_states(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Ningún test escribe en var/: el overlay de estados va a tmp_path (Clase 5)."""
+    import tools.tickets
+
+    path = tmp_path / "var" / "tickets_estado.json"
+    monkeypatch.setattr(tools.tickets, "ESTADOS_PATH", path)
+    return path

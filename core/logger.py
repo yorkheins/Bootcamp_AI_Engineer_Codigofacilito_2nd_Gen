@@ -5,13 +5,15 @@ respuesta. Del prompt solo se guarda su tamaño en caracteres (`prompt_chars`).
 
 Campos opcionales (Clase 2): `prompt_name`, `prompt_version`, `context_tokens` y
 `context_truncated`. Clase 3: `structured_schema`, `repair_attempt`, `tool_iteration` y
-`tool_calls` (solo nombres de herramientas, nunca sus argumentos). Solo se escriben cuando
-vienen; si no, la línea no los incluye.
+`tool_calls` (solo nombres de herramientas, nunca sus argumentos). Clase 4: `agent_kind`,
+`agent_run_id`, `agent_step` y `stop_reason`. Solo se escriben cuando vienen; si no, la
+línea no los incluye.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,6 +45,10 @@ class CallLogger:
         repair_attempt: int | None = None,
         tool_iteration: int | None = None,
         tool_calls: list[str] | None = None,
+        agent_kind: str | None = None,
+        agent_run_id: str | None = None,
+        agent_step: int | None = None,
+        stop_reason: str | None = None,
     ) -> dict:
         """Agrega un evento al archivo y lo devuelve.
 
@@ -73,9 +79,33 @@ class CallLogger:
             "repair_attempt": repair_attempt,
             "tool_iteration": tool_iteration,
             "tool_calls": tool_calls,
+            "agent_kind": agent_kind,
+            "agent_run_id": agent_run_id,
+            "agent_step": agent_step,
+            "stop_reason": stop_reason,
         }
         event.update({key: value for key, value in optional.items() if value is not None})
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
         return event
+
+    def annotate(self, request_id: str, *, stop_reason: str) -> None:
+        """Agrega `stop_reason` al evento `request_id` ya escrito.
+
+        Un agente conoce su motivo de parada después de su última llamada (o sin hacer
+        otra, si lo detiene el presupuesto), así que lo anota al terminar. Solo acepta
+        `stop_reason`: no es una puerta para escribir otros datos.
+        """
+        if not self.path.exists():
+            return
+        lines = self.path.read_text(encoding="utf-8").splitlines()
+        for index in range(len(lines) - 1, -1, -1):
+            event = json.loads(lines[index])
+            if event.get("request_id") == request_id:
+                event["stop_reason"] = stop_reason
+                lines[index] = json.dumps(event, ensure_ascii=False)
+                tmp = self.path.with_suffix(".tmp")
+                tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                os.replace(tmp, self.path)
+                return

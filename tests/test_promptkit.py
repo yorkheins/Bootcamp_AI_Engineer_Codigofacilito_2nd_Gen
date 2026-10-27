@@ -59,8 +59,8 @@ def test_loads_v1_v2_and_v3(kit):
     v2 = kit.get("ticket_classifier", 2)
     v3 = kit.get("ticket_classifier", 3)
     assert (v1.version, v2.version, v3.version) == (1, 2, 3)
-    assert v2.model_params == {"temperature": 0, "max_tokens": 10}
-    assert v3.model_params == {"temperature": 0, "max_tokens": 10}
+    assert v2.model_params == {"temperature": 0, "max_tokens": 20}
+    assert v3.model_params == {"temperature": 0.3, "max_tokens": 250}
 
 
 def test_get_without_version_returns_active_v3(kit):

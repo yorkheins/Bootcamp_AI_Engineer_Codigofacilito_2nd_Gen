@@ -15,8 +15,14 @@ htmlcov/
 
 # Logs generados (se conserva logs/.gitkeep)
 logs/*.jsonl
+logs/*.log
 
 # Editores y sistema
 .vscode/
 .idea/
 .DS_Store
+
+# Estado local de las herramientas (se conserva var/.gitkeep)
+var/*.json
+var/*.tmp
+.mcp-inspector/
