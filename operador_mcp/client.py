@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import threading
+import uuid
 from concurrent.futures import Future
 from pathlib import Path
 from typing import Any
@@ -84,7 +85,14 @@ class MCPToolset:
         self.command = command or sys.executable
         self.args = args if args is not None else ["-m", "operador_mcp.server"]
         # El hijo no hereda el entorno por defecto (el SDK solo pasa PATH, HOME, ...).
-        self.env = {**os.environ, **(env or {}), "OPERADOR_ROL": rol}
+        # Un request_id por sesión: reintentar crear_ticket en la misma corrida no duplica.
+        request_id = (env or {}).get("OPERADOR_REQUEST_ID") or uuid.uuid4().hex
+        self.env = {
+            **os.environ,
+            **(env or {}),
+            "OPERADOR_ROL": rol,
+            "OPERADOR_REQUEST_ID": request_id,
+        }
         self.timeout_s = timeout_s
         self.server_log = server_log
         self._tools: list[Tool] = []

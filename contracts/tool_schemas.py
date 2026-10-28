@@ -10,7 +10,12 @@ from pydantic import BaseModel, Field
 
 from contracts.structured_output import sanitize_schema
 from tools.proveedores import consultar_proveedor
-from tools.tickets import actualizar_estado, buscar_ticket, listar_tickets_por_proveedor
+from tools.tickets import (
+    actualizar_estado,
+    buscar_ticket,
+    crear_ticket,
+    listar_tickets_por_proveedor,
+)
 
 ErrorTipo = Literal["validacion", "negocio", "transitorio", "permanente", "permiso", "limite"]
 EstadoTicket = Literal["abierto", "en revisión", "esperando proveedor", "resuelto"]
@@ -71,6 +76,12 @@ class ListarTicketsPorProveedorArgs(BaseModel):
     nombre: str = Field(min_length=2, description="Nombre del proveedor, por ejemplo PagosRed")
 
 
+class CrearTicketArgs(BaseModel):
+    asunto: str = Field(min_length=1, description="Título corto del problema o la solicitud.")
+    descripcion: str = Field(min_length=1, description="Qué pasa, con el detalle del usuario.")
+    prioridad: Literal["baja", "media", "alta"]
+
+
 BUSCAR_TICKET = ToolSpec(
     name="buscar_ticket",
     description=(
@@ -117,4 +128,16 @@ LISTAR_TICKETS_POR_PROVEEDOR = ToolSpec(
     ),
     args_model=ListarTicketsPorProveedorArgs,
     handler=listar_tickets_por_proveedor,
+)
+
+CREAR_TICKET = ToolSpec(
+    name="crear_ticket",
+    description=(
+        "Crea un ticket nuevo con asunto, descripción y prioridad (baja, media o alta). "
+        "Úsala solo si el usuario pide abrir un ticket y no existe uno para ese caso. "
+        "No la uses para cambiar el estado de un ticket que ya existe: para eso está "
+        "actualizar_estado."
+    ),
+    args_model=CrearTicketArgs,
+    handler=crear_ticket,
 )

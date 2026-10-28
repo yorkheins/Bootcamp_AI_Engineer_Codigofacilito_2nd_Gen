@@ -30,11 +30,16 @@ SPECS: list[ToolSpec] = [
     schemas.BUSCAR_TICKET,
     schemas.ACTUALIZAR_ESTADO,
     schemas.LISTAR_TICKETS_POR_PROVEEDOR,
+    schemas.CREAR_TICKET,
 ]
 if hasattr(schemas, "CONSULTAR_PROVEEDOR"):  # Solo si la base ya tiene el reto de la Clase 3.
     SPECS.append(schemas.CONSULTAR_PROVEEDOR)
 
-runner = ToolRunner(SPECS, rol=os.environ.get("OPERADOR_ROL", "lectura"))
+runner = ToolRunner(
+    SPECS,
+    rol=os.environ.get("OPERADOR_ROL", "lectura"),
+    request_id=os.environ.get("OPERADOR_REQUEST_ID"),
+)
 mcp = MCPServer("agente-operador")
 
 
@@ -74,11 +79,16 @@ def listar_tickets_por_proveedor(nombre: str) -> dict[str, Any]:
     return _call("listar_tickets_por_proveedor", nombre=nombre)
 
 
+def crear_ticket(asunto: str, descripcion: str, prioridad: str) -> dict[str, Any]:
+    return _call("crear_ticket", asunto=asunto, descripcion=descripcion, prioridad=prioridad)
+
+
 FUNCTIONS: dict[str, Callable[..., dict[str, Any]]] = {
     "buscar_ticket": buscar_ticket,
     "actualizar_estado": actualizar_estado,
     "consultar_proveedor": consultar_proveedor,
     "listar_tickets_por_proveedor": listar_tickets_por_proveedor,
+    "crear_ticket": crear_ticket,
 }
 
 for spec in SPECS:

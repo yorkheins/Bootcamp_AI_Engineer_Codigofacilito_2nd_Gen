@@ -83,4 +83,5 @@ def _isolated_ticket_states(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
     path = tmp_path / "var" / "tickets_estado.json"
     monkeypatch.setattr(tools.tickets, "ESTADOS_PATH", path)
+    monkeypatch.setattr(tools.tickets, "NUEVOS_PATH", tmp_path / "var" / "tickets_nuevos.json")
     return path
